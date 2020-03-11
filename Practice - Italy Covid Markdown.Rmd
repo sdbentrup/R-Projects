@@ -1,0 +1,102 @@
+---
+title: "Italy COVID Forecast"
+author: "Scott Bentrup"
+date: "3/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Problem and Data Import
+COVID-19 is a virus currently spreading around the world. Italy has been the hot spot for the virus in Europe. Italian officials have published data online, refreshed each day, with the number of infections. I will attempt to forecast the total number of infections in Italy using this data in R.
+This data should be used for illustration only. No one should make any policy decisions based on this analysis. This project is for informaiton and my own personal learning only.
+Data is imported from https://raw.githubusercontent.com/pcm-dpc/COVID-19/master/dati-andamento-nazionale/dpc-covid19-ita-andamento-nazionale.csv.
+
+# Import relevant libraries and data
+I import the following libraries:
+library(data.table)
+library(forecast)
+library(tidyverse)
+library(dygraphs)
+library(lubridate)
+library(zoo)
+library(RColorBrewer)
+
+```{r libraries, include=FALSE, paged.print=FALSE}
+library(data.table)
+library(forecast)
+library(tidyverse)
+library(dygraphs)
+library(lubridate)
+library(zoo)
+library(RColorBrewer)
+```
+
+```{r data import, echo=FALSE}
+italy <- fread('https://raw.githubusercontent.com/pcm-dpc/COVID-19/master/dati-andamento-nazionale/dpc-covid19-ita-andamento-nazionale.csv')
+
+head(italy)
+```
+In this data, "data" refers to the date and "totale_casi" is total cases. Since I do not speak Italian (at least, not well enough; Duolingo hasn't gotten me far enough!) I cannot evaluate the other columns.
+
+```{r data summary, echo=FALSE}
+summary(italy)
+```
+
+Since the data contains no missing values, we can continue with the analysis.
+
+## Prepare the data and visualize the time series
+I convert the data from character to time series using lubridate. Data is converted into a time series and visualized with dygraph. Graph is intentionally simple.
+```{r time series, echo=FALSE}
+italy$data <- ymd_hms(italy$data, tz = 'Europe/Rome')
+italy_ts <- ts(italy$totale_casi)
+dygraph(italy_ts, main = 'Total COVID-19 cases in Italy, starting 2 Feb')
+```
+
+## Generate an ARIMA model
+
+My first forecasting technique is to generate an ARIMA model. I use auto.arima, knowing that many feel that one should specify which parameters ARIMA model uses manually, however auto.arima in this case is probably accurate enough, with the correct parameters. I know the time series is not seasonal. Auto.arima returns an ARIMA(0,2,0) model as the best. I forecast this model 90 days ahead and plot the results.
+
+```{r ARIMA, echo=FALSE}
+italy_arima <- auto.arima(italy_ts, trace = T, 
+                          stepwise = FALSE, 
+                          approximation = FALSE, 
+                          stationary = F,
+                          seasonal = F)
+arima_fore <- forecast(italy_arima, h = 90)
+autoplot(arima_fore)
+```
+
+## Exponential smoothing model
+Since the ARIMA model output seems to be a linear model it is not the ideal model. Next, I will try exponential smoothing using the ets() function with damping. This is because we know that at some point the number of cases will level or decrease. I also forecast this 90 days ahead and plot the results.
+```{r ets model, echo=FALSE}
+italy_ets <- ets(italy_ts,damped = TRUE)
+ets_fore <- forecast(italy_ets, h = 90)
+autoplot(ets_fore)
+```
+
+The ETS model seems like a better choice than the ARIMA model. I will now combine them and compare the two results in dygraph. This requires that we combine the time series forecasts into a data.frame then convert to a zoo format. I also add dates starting at the original end date + 1 and extend the date sequence 90 days
+```{r combine models, echo=FALSE}
+mydates <-  seq.Date(from = as.Date(max(italy$data) + days(1)),
+                     to = as.Date(max(italy$data) + days(90)),
+                     by = 1)
+forecasts <- data.frame('Date' = mydates, 'ARIMA' = arima_fore$mean, 'ETS' = ets_fore$mean)#, 'Holt' = italy_holt$mean)
+z.forecast <- zoo(x = forecasts[,-1], order.by = forecasts[,1])
+
+```
+
+```{r forecast dygraph, echo=FALSE}
+dygraph(data = z.forecast, main = 'Forecasts of COVID-19 cases in Italy over 90 days', ylab = 'Total Cases') %>% 
+  dyOptions(colors = brewer.pal(n = 3, 'Dark2')) %>% 
+  dyRangeSelector(height = 20)
+```
+
+# Discussion
+The ETS model, with damping, seems to create a more likely forecast, since it does not show an increase in the # of COVID-19 cases running infinitely and linearly. While the two models are close until approximately 26 March 2020 at around 24,700 cases, they begin to diverge sharply with the ets model forecasting 56k cases by 8 June 2020 and the ARIMA model showing 98k cases.
+
+# Conclusion
+I hope this analysis is wrong and that the number of COVID-19 cases drops, rather than increases. I hope that if either of these models are in any way correct it is the ETS model, showing the lower number of cases. And above all else, I hope no one plans or makes any decisions on how to treat the COVID-19 outbreak based on these results.
+
+R code is available upon request.
